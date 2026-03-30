@@ -1,0 +1,42 @@
+ocr:
+  lang: "eng"
+  min_text_length: 2
+
+walls:
+  adaptive_block_size: 15
+  adaptive_C: 3
+  morph_kernel: [2, 2]
+  min_component_area: 300
+  min_wall_area: 2000
+  min_wall_thickness: 3
+
+segmentation:
+  corridor_thresh: 12        # px — narrow connector cutoff
+  min_room_area: 1500        # px² — ignore tiny regions
+  morph_kernel: [5, 5]
+
+doors:
+  min_radius: 15
+  max_radius: 60
+  hough_param2: 18
+  clearance_px: 80
+  
+furniture:
+  # pixel sizes — becomes scale-aware in Phase 2
+  sofa:            [140, 60]
+  bed:             [140, 80]
+  wardrobe:        [60,  120]
+  wc:              [40,  40]
+  sink:            [40,  30]
+  washing_machine: [60,  60]
+
+render:
+  image_size: 512
+  num_inference_steps: 40
+  guidance_scale: 7.5
+  controlnet_conditioning_scale: 1.4
+  seed: 42
+
+output:
+  dir: "results"
+  save_debug: true

@@ -1,0 +1,12 @@
+opencv-python>=4.8
+numpy>=1.24
+pytesseract>=0.3.10
+Pillow>=10.0
+torch>=2.0
+diffusers>=0.25
+transformers>=4.38
+pyyaml>=6.0
+pytest>=7.0
+
+# Phase 2 — uncomment when upgrading classifier
+# open-clip-torch>=2.24
