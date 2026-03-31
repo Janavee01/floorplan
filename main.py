@@ -47,7 +47,7 @@ def run(input_path, config, render):
     if debug: cv2.imwrite(str(out_dir / "walls_no_text.png"), wall_mask)
     print("[3/6] Wall extraction done")
 
-    # 4. Door detection + removal  ← NOW happens before segmentation
+    # 4. Door detection + removal
     d = config.get("doors", {})
     clean_walls, door_mask = detect_and_remove_doors(
         wall_mask,
@@ -60,20 +60,26 @@ def run(input_path, config, render):
     print(f"[4/6] Door detection — {'doors found, gaps sealed' if n_doors else 'no doors detected'}")
     if debug: cv2.imwrite(str(out_dir / "debug_doors.png"), door_mask)
 
-    # 5. Room segmentation — runs on CLEAN walls (doors removed)
+    # 5. Room segmentation — corridor_thresh / min_room_area = None means auto
     s = config["segmentation"]
-    rooms, room_core, dist = segment_rooms(clean_walls,
-        corridor_thresh=s["corridor_thresh"], min_room_area=s["min_room_area"],
-        morph_kernel=tuple(s["morph_kernel"]))
+    corridor_thresh = s["corridor_thresh"]   # None or explicit int from config
+    min_room_area   = s["min_room_area"]     # None or explicit int from config
+
+    rooms, room_core, dist = segment_rooms(
+        clean_walls,
+        corridor_thresh = corridor_thresh,
+        min_room_area   = min_room_area,
+        morph_kernel    = tuple(s["morph_kernel"]),
+    )
     rooms_data = extract_room_features(rooms)
     if debug: cv2.imwrite(str(out_dir / "debug_room_core.png"), room_core)
     print(f"[5/6] Segmentation — {len(rooms_data)} rooms")
 
-    # 6. Classify using OCR labels first, heuristics as fallback
-    rooms_data = classify_rooms(rooms_data, ocr_labels)
+    # 6. Classify
+    rooms_data = classify_rooms(rooms_data, ocr_labels, color)
     for r in rooms_data:
         src = r.get("label_source", "?")
-        print(f"      Room {r['id']:>2}  area={r['area']:>7}  -> {r['type']:<12}  [{src}]")
+        print(f"      Room {r['id']:>2}  area={r['area']:>7}  -> {r['type']:<14}  [{src}]")
 
     # 7. Furniture placement
     furnished = furnish_all(rooms_data, clean_walls, door_mask, clearance_map, config["furniture"])
