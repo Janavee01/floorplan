@@ -10,8 +10,8 @@ Key improvements over v1
 - Runs multiple preprocessing passes with different scales and PSM modes
   so it handles any scan quality, font size or contrast.
 """
-
 from __future__ import annotations
+from .classify import OCR_LABEL_MAP
 import re
 import cv2
 import numpy as np
@@ -48,6 +48,12 @@ def extract_labels(image_bgr: np.ndarray, min_length: int = 2) -> list[dict]:
             if key not in seen:
                 seen.add(key)
                 all_labels.append(label)
+
+    # Merge adjacent tokens that form known multi-word labels (e.g. LIVING + ROOM)
+    all_labels = _merge_adjacent_tokens(all_labels)
+
+    # Spatial dedup — if two labels with same text overlap heavily, keep one
+    all_labels = _spatial_dedup(all_labels)
 
     return all_labels
 
@@ -132,17 +138,97 @@ def _run_tesseract(img: np.ndarray, scale: float, min_length: int) -> list[dict]
 
 
 def _is_noise(text: str) -> bool:
-    """
-    Return True for tokens that are clearly not room labels:
-    - Pure numbers
-    - Dimension strings like 12'X11', 4X9, 6'x7'
-    - Strings that are almost entirely punctuation / symbols
-    """
-    # Pure dimension pattern
     if re.match(r"^[\d'\"X\.x!':,\s]+$", text):
         return True
-    # Strings with fewer than 2 alphabetic characters are noise
     alpha_count = sum(1 for c in text if c.isalpha())
-    if alpha_count < 2:
+    if alpha_count < 3:          # raised from 2
+        return True
+    if alpha_count / len(text) < 0.60:   # raised from 0.50
+        return True
+    noise_chars = sum(1 for c in text if c in "[](){}|_&@#<>")
+    if noise_chars >= 2:
+        return True
+    # Reject tokens that look like OCR-mangled partials (e.g. ITCHENY, BARIROOM)
+    # by checking if they're substrings of known noise patterns
+    if len(text) <= 4 and not any(text in k for k in OCR_LABEL_MAP):
         return True
     return False
+
+def _merge_adjacent_tokens(labels: list[dict]) -> list[dict]:
+    """
+    Merge horizontally adjacent label pairs that together form a known
+    multi-word room label (e.g. "LIVING" + "ROOM" → "LIVING ROOM").
+
+    The merged label gets a bounding box that covers both tokens and is
+    appended to the list — originals are kept so single-word matching
+    still works.
+    """
+    MULTI_WORD = {
+        "LIVING ROOM", "MASTER BEDROOM", "DINING ROOM",
+        "SITTING ROOM", "FAMILY ROOM", "DRAWING ROOM",
+        "GUEST ROOM", "UTILITY ROOM", "EN SUITE",
+    }
+
+    merged = list(labels)
+    n = len(labels)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            combined = labels[i]["text"] + " " + labels[j]["text"]
+            if combined not in MULTI_WORD:
+                continue
+            # Must be on roughly the same horizontal line
+            cy_i = labels[i]["y"] + labels[i]["h"] / 2
+            cy_j = labels[j]["y"] + labels[j]["h"] / 2
+            if abs(cy_i - cy_j) > max(labels[i]["h"], labels[j]["h"]) * 1.2:
+                continue
+            # Must be reasonably close horizontally
+            gap = abs(labels[j]["x"] - (labels[i]["x"] + labels[i]["w"]))
+            if gap > labels[i]["w"] * 1.5:
+                continue
+            x1 = min(labels[i]["x"], labels[j]["x"])
+            y1 = min(labels[i]["y"], labels[j]["y"])
+            x2 = max(labels[i]["x"] + labels[i]["w"], labels[j]["x"] + labels[j]["w"])
+            y2 = max(labels[i]["y"] + labels[i]["h"], labels[j]["y"] + labels[j]["h"])
+            merged.append({"text": combined, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
+    return merged
+
+
+def _spatial_dedup(labels: list[dict]) -> list[dict]:
+    """
+    Remove duplicate labels that have the same text AND whose bounding
+    boxes overlap by more than 50% (IoU > 0.3).  Keeps the larger box.
+    """
+    def iou(a, b):
+        ax1, ay1 = a["x"], a["y"]
+        ax2, ay2 = ax1 + a["w"], ay1 + a["h"]
+        bx1, by1 = b["x"], b["y"]
+        bx2, by2 = bx1 + b["w"], by1 + b["h"]
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if inter == 0:
+            return 0.0
+        union = a["w"] * a["h"] + b["w"] * b["h"] - inter
+        return inter / max(union, 1)
+
+    keep = [True] * len(labels)
+    for i in range(len(labels)):
+        if not keep[i]:
+            continue
+        for j in range(i + 1, len(labels)):
+            if not keep[j]:
+                continue
+            if labels[i]["text"] != labels[j]["text"]:
+                continue
+            if iou(labels[i], labels[j]) > 0.30:
+                # Drop the smaller one
+                area_i = labels[i]["w"] * labels[i]["h"]
+                area_j = labels[j]["w"] * labels[j]["h"]
+                if area_i >= area_j:
+                    keep[j] = False
+                else:
+                    keep[i] = False
+                    break
+    return [l for l, k in zip(labels, keep) if k]

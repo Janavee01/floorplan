@@ -8,7 +8,7 @@ Architectural floorplans draw doors as:
 Strategy
 --------
 1. Detect arc circles via Hough transform
-2. Fill each detected arc region with wall pixels (closing the room boundary)
+2. Fill each detected arc region with wall pixels (closiīng the room boundary)
 3. Return the patched wall mask for segmentation, plus a clearance map
    for furniture placement
 """
@@ -19,27 +19,26 @@ import numpy as np
 
 def detect_and_remove_doors(
     wall_mask: "np.ndarray",
-    min_radius: int = 15,
-    max_radius: int = 60,
+    min_radius: int = None,
+    max_radius: int = None,
     hough_param2: int = 18,
 ) -> tuple:
     """
-    Detect door arcs in *wall_mask*, patch the gaps they create,
-    and return both the cleaned wall mask and a door location mask.
-
-    Parameters
-    ----------
-    wall_mask    : binary wall image (255 = wall, 0 = free)
-    min_radius   : min door swing radius in pixels
-    max_radius   : max door swing radius in pixels
-    hough_param2 : Hough accumulator threshold — lower finds more circles
-
-    Returns
-    -------
-    clean_walls : wall_mask with door gaps filled in (ready for segmentation)
-    door_mask   : binary mask marking where doors were found (for clearance)
+    Detect door arcs in wall_mask and fix gaps.
     """
-    door_mask  = np.zeros_like(wall_mask)
+
+    h, w = wall_mask.shape
+
+    # ✅ NEW: scale radii based on image size
+    scale = min(h, w) / 800  # 800px reference
+
+    if min_radius is None:
+        min_radius = int(20 * scale)
+
+    if max_radius is None:
+        max_radius = int(120 * scale)  # bigger for hi-res
+
+    door_mask = np.zeros_like(wall_mask)
     clean_walls = wall_mask.copy()
 
     circles = cv2.HoughCircles(
@@ -55,16 +54,15 @@ def detect_and_remove_doors(
 
     if circles is not None:
         circles = np.uint16(np.around(circles[0]))
+
         for (cx, cy, r) in circles:
-            # Mark door location
+            # mark door area
             cv2.circle(door_mask, (cx, cy), r, 255, -1)
 
-            # Close the gap: draw a filled arc region back as wall
-            # This seals the room boundary so segmentation doesn't bleed through
-            cv2.circle(clean_walls, (cx, cy), r, 255, 2)
+            # close wall gap (ONLY outline)
+            cv2.circle(clean_walls, (cx, cy), r, 255, 3)
 
     return clean_walls, door_mask
-
 
 def build_clearance_map(
     door_mask: "np.ndarray",

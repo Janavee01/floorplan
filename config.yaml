@@ -11,6 +11,7 @@ walls:
   min_wall_thickness: 3
 
 segmentation:
+  gap_ratio: 0.02
   corridor_thresh: null   # null = auto-derived per image from distance transform peaks
   min_room_area: null     # null = auto-derived as 1.5% of total image area
   morph_kernel: [3, 3]

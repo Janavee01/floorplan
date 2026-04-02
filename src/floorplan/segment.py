@@ -1,212 +1,132 @@
 """
-segment.py — segment free space in a wall mask into individual rooms.
+segment.py — OCR-anchored flood-fill room segmentation.
 
-Strategy
---------
-1. Compute a distance transform on free space.
-2. Derive a scale-aware corridor threshold from the image itself
-   (median of local maxima) rather than a fixed pixel value.
-3. Use marker-based watershed to split touching rooms that share a thin
-   connection — pure connected-components merges them.
-4. Return per-room masks plus debug images.
+Key fix: wall gaps are sealed with morphological closing (no Hough needed).
+Closing kernel size = estimated door width, so all door-sized gaps get filled
+regardless of whether they were drawn as arcs, lines, or nothing at all.
 """
-
 from __future__ import annotations
 import cv2
 import numpy as np
+from .classify import _normalise_label
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def segment_rooms(
     wall_mask: np.ndarray,
-    corridor_thresh: int | None = None,   # None = auto-derive from image
-    min_room_area: int | None  = None,    # None = auto-derive from image
-    morph_kernel: tuple[int, int] = (3, 3),
-) -> tuple[list, np.ndarray, np.ndarray]:
-    """
-    Identify room regions from a binary wall mask.
+    ocr_labels: list[dict],
+) -> list[dict]:
+    h, w = wall_mask.shape
 
-    All thresholds default to *None* and are derived from the image when
-    not supplied, so the same code works on any scan resolution.
+    # Step 1 — seal ALL wall gaps (doors, windows, tiny breaks)
+    sealed = _seal_all_gaps(wall_mask, h, w)
 
-    Parameters
-    ----------
-    wall_mask        : binary uint8 image, walls=255, free=0
-    corridor_thresh  : distance-transform cutoff to split corridors.
-                       Pass an explicit int to override auto-detection.
-    min_room_area    : minimum blob area in px².
-                       Pass an explicit int to override auto-detection.
-    morph_kernel     : morphological opening kernel after thresholding.
+    # Step 2 — free space = everything that is not wall
+    free = cv2.bitwise_not(sealed)
 
-    Returns
-    -------
-    rooms      : list of uint8 masks, one per room (255 inside, 0 outside)
-    room_core  : debug — thresholded core image
-    dist       : debug — raw distance-transform output
-    """
-    _, bin_img = cv2.threshold(wall_mask, 127, 255, cv2.THRESH_BINARY)
-    free = 255 - bin_img
+    rooms = []
+    used_pixels = np.zeros((h, w), dtype=np.uint8)
 
-    # Distance transform — every free pixel = distance to nearest wall
-    dist = cv2.distanceTransform(free, cv2.DIST_L2, 5)
+    for label in ocr_labels:
+        room_type = _normalise_label(label["text"])
+        if room_type is None:
+            continue
+        # Skip corridor labels — they're connectors not rooms
+        if room_type == "corridor":
+            continue
 
-    # --- Auto-derive corridor_thresh from this image -------------------------
-    if corridor_thresh is None:
-        corridor_thresh = _auto_corridor_thresh(dist)
+        sx = label["x"] + label["w"] // 2
+        sy = label["y"] + label["h"] // 2
+        sx = max(1, min(w - 2, sx))
+        sy = max(1, min(h - 2, sy))
 
-    # --- Auto-derive min_room_area from image size ---------------------------
-    if min_room_area is None:
-        min_room_area = _auto_min_room_area(wall_mask)
+        # If seed lands on wall, find nearest free pixel
+        if free[sy, sx] == 0:
+            sx, sy = _nearest_free(free, sx, sy)
+            if sx is None:
+                print(f"      [skip] '{label['text']}' — seed stuck in wall")
+                continue
 
-    # Threshold: keep only pixels comfortably inside rooms
-    _, room_core = cv2.threshold(dist, corridor_thresh, 255, cv2.THRESH_BINARY)
-    room_core = room_core.astype(np.uint8)
+        # If already claimed by a previous room, skip
+        if used_pixels[sy, sx] == 255:
+            print(f"      [skip] '{label['text']}' — area already claimed")
+            continue
 
-    # Morphological open — remove speckle from the core
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, morph_kernel)
-    room_core = cv2.morphologyEx(room_core, cv2.MORPH_OPEN, kernel, iterations=1)
+        # Flood fill from seed
+        fill_input = free.copy()
+        fill_mask  = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        cv2.floodFill(fill_input, fill_mask, (sx, sy), 128)
+        room_mask = (fill_input == 128).astype(np.uint8) * 255
 
-    # --- Watershed to split touching rooms -----------------------------------
-    rooms = _watershed_split(free, room_core, dist, min_room_area)
+        area = cv2.countNonZero(room_mask)
+        if area < 500:
+            print(f"      [skip] '{label['text']}' — fill too small ({area}px)")
+            continue
 
-    return rooms, room_core, dist
+        # Mark as used
+        used_pixels = cv2.bitwise_or(used_pixels, room_mask)
 
-
-def extract_room_features(room_masks: list) -> list[dict]:
-    """
-    Compute geometric features for each room mask.
-
-    Returns list of dicts:
-        id, area, centroid, bbox, aspect_ratio,
-        compactness, rectangularity, contour, mask
-    """
-    rooms_data = []
-
-    for i, mask in enumerate(room_masks):
-        area = cv2.countNonZero(mask)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            room_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         if not contours:
             continue
         cnt = max(contours, key=cv2.contourArea)
+        x, y, bw, bh = cv2.boundingRect(cnt)
 
-        x, y, w, h = cv2.boundingRect(cnt)
+        print(f"      [room] '{label['text']}' -> {room_type}  area={area}")
 
-        M = cv2.moments(cnt)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-        else:
-            cx, cy = x + w // 2, y + h // 2
-
-        perimeter      = cv2.arcLength(cnt, True)
-        compactness    = (4 * np.pi * area) / (perimeter ** 2 + 1e-6)
-        rectangularity = area / (w * h + 1e-6)
-
-        rooms_data.append({
-            "id":             i,
-            "area":           area,
-            "centroid":       (cx, cy),
-            "bbox":           (x, y, w, h),
-            "aspect_ratio":   w / (h + 1e-5),
-            "compactness":    compactness,
-            "rectangularity": rectangularity,
-            "contour":        cnt,
-            "mask":           mask,
+        rooms.append({
+            "type":         room_type,
+            "label_source": "ocr",
+            "mask":         room_mask,
+            "area":         area,
+            "bbox":         (x, y, bw, bh),
+            "centroid":     (sx, sy),
+            "label_text":   label["text"],
         })
 
-    return rooms_data
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _auto_corridor_thresh(dist: np.ndarray) -> float:
-    """
-    Derive a corridor threshold purely from the distance map.
-
-    Finds local maxima of the distance transform (room centre-points),
-    then sets the threshold at 35% of their median value.
-    This scales naturally with image resolution and wall thickness —
-    no hardcoded pixel values.
-    """
-    smooth = cv2.GaussianBlur(dist, (5, 5), 0)
-
-    # Dilate to find local maxima
-    k = max(5, int(min(dist.shape) * 0.02) | 1)   # ~2% of image, always odd
-    dilated = cv2.dilate(smooth, np.ones((k, k), np.uint8))
-    local_max = (smooth >= dilated - 0.5) & (smooth > 0)
-
-    peak_values = smooth[local_max]
-    if len(peak_values) == 0:
-        return 6.0
-
-    median_peak = float(np.median(peak_values))
-    thresh = median_peak * 0.35
-    return max(thresh, 4.0)
-
-
-def _auto_min_room_area(wall_mask: np.ndarray) -> int:
-    """
-    Minimum room area = 1.5% of total image area, floored at 800 px².
-    Scales automatically with any resolution.
-    """
-    total = wall_mask.shape[0] * wall_mask.shape[1]
-    return max(800, int(total * 0.015))
-
-
-def _watershed_split(
-    free: np.ndarray,
-    room_core: np.ndarray,
-    dist: np.ndarray,
-    min_room_area: int,
-) -> list[np.ndarray]:
-    """
-    Marker-based watershed to separate touching rooms.
-
-    Each connected blob in room_core becomes a seed marker.
-    Watershed expands those seeds through full free-space, using the
-    inverted distance transform as the topographic surface.
-
-    Correctly splits two rooms connected only by a doorway-width passage
-    where pure connectedComponents would merge them into one blob.
-    """
-    num_seeds, seed_labels = cv2.connectedComponents(room_core, connectivity=8)
-
-    if num_seeds <= 1:
-        return _cc_fallback(free, min_room_area)
-
-    markers = seed_labels.astype(np.int32)
-
-    # Build 3-channel image for cv2.watershed (inverted dist = room centres are valleys)
-    dist_norm = cv2.normalize(dist, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    inverted  = 255 - dist_norm
-    vis       = cv2.cvtColor(inverted, cv2.COLOR_GRAY2BGR)
-
-    cv2.watershed(vis, markers)
-
-    rooms = []
-    for label_id in range(1, num_seeds):
-        mask = np.zeros(free.shape, dtype=np.uint8)
-        mask[markers == label_id] = 255
-        mask = cv2.bitwise_and(mask, free)   # constrain to free space only
-        if cv2.countNonZero(mask) >= min_room_area:
-            rooms.append(mask)
-
     return rooms
 
 
-def _cc_fallback(free: np.ndarray, min_room_area: int) -> list[np.ndarray]:
-    """Simple connected-components fallback when watershed finds no seeds."""
-    num_labels, labels = cv2.connectedComponents(free, connectivity=8)
-    rooms = []
-    for i in range(1, num_labels):
-        mask = np.zeros_like(labels, dtype=np.uint8)
-        mask[labels == i] = 255
-        if cv2.countNonZero(mask) >= min_room_area:
-            rooms.append(mask)
-    return rooms
+def _seal_all_gaps(wall_mask: np.ndarray, h: int, w: int) -> np.ndarray:
+    """
+    Close all wall gaps up to door-width using morphological closing.
+
+    Door width on a typical floorplan ≈ 2.5–4% of the shorter image dimension.
+    We close with that kernel size so every door gap gets sealed regardless
+    of whether it was drawn as an arc, a line, or not at all.
+
+    Then we also run horizontal and vertical 1D closing to catch
+    wall-end gaps that the 2D kernel might miss.
+    """
+    # Estimate door gap size from image dimensions
+    gap_px = max(5, int(min(h, w) * 0.02))
+
+    sealed = wall_mask.copy()
+
+    # 2D closing — seals gaps in any direction
+    kernel_2d = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (gap_px, gap_px)
+    )
+    sealed = cv2.morphologyEx(sealed, cv2.MORPH_CLOSE, kernel_2d)
+
+    # 1D horizontal closing — catches horizontal wall breaks
+    kernel_h = np.ones((1, gap_px), np.uint8)
+    sealed = cv2.morphologyEx(sealed, cv2.MORPH_CLOSE, kernel_h)
+
+    # 1D vertical closing — catches vertical wall breaks
+    kernel_v = np.ones((gap_px, 1), np.uint8)
+    sealed = cv2.morphologyEx(sealed, cv2.MORPH_CLOSE, kernel_v)
+
+    return sealed
+
+
+def _nearest_free(free: np.ndarray, x: int, y: int, search_r: int = 30):
+    h, w = free.shape
+    for r in range(1, search_r):
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and free[ny, nx] == 255:
+                    return nx, ny
+    return None, None
