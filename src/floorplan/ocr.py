@@ -136,33 +136,25 @@ def _run_tesseract(img: np.ndarray, scale: float, min_length: int) -> list[dict]
 
     return labels
 
-
 def _is_noise(text: str) -> bool:
+    # Leading punctuation = OCR artifact
+    if text and text[0] in '-"\'|~`':
+        return True
     if re.match(r"^[\d'\"X\.x!':,\s]+$", text):
         return True
     alpha_count = sum(1 for c in text if c.isalpha())
-    if alpha_count < 3:          # raised from 2
+    if alpha_count < 3:
         return True
-    if alpha_count / len(text) < 0.60:   # raised from 0.50
+    if alpha_count / len(text) < 0.60:
         return True
     noise_chars = sum(1 for c in text if c in "[](){}|_&@#<>")
     if noise_chars >= 2:
         return True
-    # Reject tokens that look like OCR-mangled partials (e.g. ITCHENY, BARIROOM)
-    # by checking if they're substrings of known noise patterns
     if len(text) <= 4 and not any(text in k for k in OCR_LABEL_MAP):
         return True
     return False
 
 def _merge_adjacent_tokens(labels: list[dict]) -> list[dict]:
-    """
-    Merge horizontally adjacent label pairs that together form a known
-    multi-word room label (e.g. "LIVING" + "ROOM" → "LIVING ROOM").
-
-    The merged label gets a bounding box that covers both tokens and is
-    appended to the list — originals are kept so single-word matching
-    still works.
-    """
     MULTI_WORD = {
         "LIVING ROOM", "MASTER BEDROOM", "DINING ROOM",
         "SITTING ROOM", "FAMILY ROOM", "DRAWING ROOM",
@@ -170,7 +162,9 @@ def _merge_adjacent_tokens(labels: list[dict]) -> list[dict]:
     }
 
     merged = list(labels)
+    to_remove = set()          # ← track which originals got merged
     n = len(labels)
+
     for i in range(n):
         for j in range(n):
             if i == j:
@@ -178,12 +172,10 @@ def _merge_adjacent_tokens(labels: list[dict]) -> list[dict]:
             combined = labels[i]["text"] + " " + labels[j]["text"]
             if combined not in MULTI_WORD:
                 continue
-            # Must be on roughly the same horizontal line
             cy_i = labels[i]["y"] + labels[i]["h"] / 2
             cy_j = labels[j]["y"] + labels[j]["h"] / 2
             if abs(cy_i - cy_j) > max(labels[i]["h"], labels[j]["h"]) * 1.2:
                 continue
-            # Must be reasonably close horizontally
             gap = abs(labels[j]["x"] - (labels[i]["x"] + labels[i]["w"]))
             if gap > labels[i]["w"] * 1.5:
                 continue
@@ -191,9 +183,15 @@ def _merge_adjacent_tokens(labels: list[dict]) -> list[dict]:
             y1 = min(labels[i]["y"], labels[j]["y"])
             x2 = max(labels[i]["x"] + labels[i]["w"], labels[j]["x"] + labels[j]["w"])
             y2 = max(labels[i]["y"] + labels[i]["h"], labels[j]["y"] + labels[j]["h"])
-            merged.append({"text": combined, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
-    return merged
+            merged.append({"text": combined, "x": x1, "y": y1, "w": x2-x1, "h": y2-y1})
+            to_remove.add(i)   # ← mark originals for removal
+            to_remove.add(j)
 
+    # Remove original tokens that were successfully merged
+    merged = [l for idx, l in enumerate(labels) if idx not in to_remove] + \
+             [l for l in merged if l not in labels]
+
+    return merged
 
 def _spatial_dedup(labels: list[dict]) -> list[dict]:
     """
