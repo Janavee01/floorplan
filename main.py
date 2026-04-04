@@ -1,25 +1,20 @@
 """
 main.py — CLI entry point for the floorplan AI pipeline.
-
-Usage
------
-    python main.py --input floorplan.jpg
-    python main.py --input floorplan.jpg --render
 """
 import argparse, sys
-from pathlib import Path
-import argparse, sys
-import numpy as np          # ADD THIS
+import numpy as np
 from pathlib import Path
 import cv2, yaml
+
 def load_config(path):
     with open(path) as f:
         return yaml.safe_load(f)
+
 def run(input_path, config, render):
     from src.floorplan.ocr       import extract_labels
     from src.floorplan.walls     import extract_walls
-    from src.floorplan.segment   import segment_rooms          # changed — no extract_room_features
-    from src.floorplan.classify  import colorize_rooms         # changed — no classify_rooms
+    from src.floorplan.segment   import segment_rooms
+    from src.floorplan.classify  import colorize_rooms
     from src.floorplan.furniture import furnish_all
 
     out_dir = Path(config["output"]["dir"])
@@ -31,11 +26,11 @@ def run(input_path, config, render):
     if color is None:
         print(f"[ERROR] Cannot read: {input_path}"); sys.exit(1)
     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
-    print(f"[1/5] Loaded {input_path} ({color.shape[1]}x{color.shape[0]})")
+    print(f"[1/6] Loaded {input_path} ({color.shape[1]}x{color.shape[0]})")
 
     # 2. OCR
     ocr_labels = extract_labels(color, min_length=config["ocr"]["min_text_length"])
-    print(f"[2/5] OCR — {len(ocr_labels)} text regions: "
+    print(f"[2/6] OCR — {len(ocr_labels)} text regions: "
           f"{[l['text'] for l in ocr_labels]}")
 
     # 3. Wall extraction
@@ -45,34 +40,35 @@ def run(input_path, config, render):
         morph_kernel=tuple(w["morph_kernel"]), min_component_area=w["min_component_area"],
         min_wall_area=w["min_wall_area"], min_wall_thickness=w["min_wall_thickness"])
     if debug: cv2.imwrite(str(out_dir / "walls_no_text.png"), wall_mask)
-    print("[3/5] Wall extraction done")
+    print("[3/6] Wall extraction done")
 
-    # 4. Segment — doors handled internally via chord sealing
+    # 4. Segment
     rooms = segment_rooms(wall_mask, ocr_labels)
-    print(f"[4/5] Segmentation — {len(rooms)} rooms")
+    print(f"[4/6] Segmentation — {len(rooms)} rooms")
     for r in rooms:
         print(f"      {r['type']:<14} area={r['area']:>7}  label='{r['label_text']}'")
 
-    # 5. Colorize output
-    result = colorize_rooms(color, rooms)
-    out_path = out_dir / "colored_plan.png"
-    cv2.imwrite(str(out_path), result)
-    print(f"[5/5] Colored plan saved -> {out_path}")
+    # 5. Colorize
+    colored = colorize_rooms(color, rooms)
+    cv2.imwrite(str(out_dir / "colored_plan.png"), colored)
+    print(f"[5/6] Colored plan saved -> {out_dir / 'colored_plan.png'}")
 
-    # 6. Furniture placement
-    # NOTE: furnish_all signature needs updating — no more door_mask/clearance_map
-    # from doors.py. Pass None for now until furniture.py is updated.
-    # Replace the furnish_all call with:
-    h, w = wall_mask.shape
-    door_mask     = np.zeros((h, w), dtype=np.uint8)  # empty, no doors
-    clearance_map = np.zeros((h, w), dtype=np.uint8)  # empty, no clearance
-    furnished = furnish_all(rooms, wall_mask, door_mask, clearance_map, config["furniture"])
+    # 6. Furniture placement — draw on colored plan, no door_mask needed
+    furnished = furnish_all(
+        rooms, wall_mask,
+        door_mask=None, clearance_map=None,
+        cfg=config["furniture"],
+        original_image=colored,
+    )
+    furnished_path = out_dir / "furnished_plan.png"
+    cv2.imwrite(str(furnished_path), furnished)
+    print(f"[6/6] Furniture placed -> {furnished_path}")
 
-    # 7. Optional render (unchanged)
+    # 7. Optional ControlNet render
     if render:
         from src.floorplan.render import load_pipeline, render_isometric
         r = config["render"]
-        print("[6/6] Loading ControlNet ...")
+        print("[7/7] Loading ControlNet ...")
         pipe, device = load_pipeline()
         result = render_isometric(furnished, pipe, device,
             image_size=r["image_size"], num_inference_steps=r["num_inference_steps"],
@@ -81,9 +77,9 @@ def run(input_path, config, render):
             seed=r["seed"])
         rpath = out_dir / "isometric_render.png"
         result.save(str(rpath))
-        print(f"[6/6] Render saved -> {rpath}")
+        print(f"[7/7] Render saved -> {rpath}")
     else:
-        print("[6/6] Skipped render (use --render to enable)")
+        print("[7/7] Skipped render (use --render to enable)")
 
     print(f"\nDone. Outputs in: {out_dir.resolve()}")
 
