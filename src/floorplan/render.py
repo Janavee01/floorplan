@@ -12,18 +12,19 @@ import torch
 from PIL import Image
 
 PROMPT = (
-    "top-down isometric 3D architectural floor plan render, "
-    "modern apartment interior, realistic materials, "
-    "soft daylight, wood flooring, white walls, "
-    "furniture clearly visible, bed in bedroom, sofa in living room, "
-    "high detail, ultra realistic, clean architectural visualization"
+    "top-down isometric 3D floor plan, ultra realistic architectural render, "
+    "sharp clean geometry, clearly defined furniture, "
+    "bed with pillows and blanket in bedroom, "
+    "sofa with cushions in living room, coffee table, "
+    "kitchen counter with cabinets, sink, appliances, "
+    "bathroom with toilet and sink, "
+    "high detail, sharp edges, photorealistic materials, "
+    "no blur, no distortion"
 )
 NEGATIVE_PROMPT = (
-    "cartoon, sketch, flat 2d, blurry, distorted, "
-    "text, labels, watermark, low quality, black image, "
-    "dark, overexposed, duplicate rooms"
+    "blurry, low detail, distorted furniture, incorrect layout, "
+    "missing furniture, messy, noisy, artifacts, cartoon, sketch"
 )
-
 
 def _get_device():
     if torch.cuda.is_available():
@@ -37,9 +38,10 @@ def load_pipeline():
     print(f"      Device: {device} ({dtype})")
 
     controlnet = ControlNetModel.from_pretrained(
-        "lllyasviel/sd-controlnet-mlsd",
+        "lllyasviel/sd-controlnet-canny",
         torch_dtype=dtype,
     )
+
     pipe = StableDiffusionControlNetPipeline.from_pretrained(
         "runwayml/stable-diffusion-v1-5",
         controlnet=controlnet,
@@ -57,10 +59,10 @@ def render_isometric(
     pipe,
     device: str,
     line_drawing_rgb: np.ndarray,
-    image_size: int = 512,
-    num_inference_steps: int = 20,   # reduced from 40 to save VRAM + time
-    guidance_scale: float = 7.5,
-    controlnet_conditioning_scale: float = 1.4,
+    image_size: int = 640,
+    num_inference_steps: int = 30,   # reduced from 40 to save VRAM + time
+    guidance_scale: float = 8.5,
+    controlnet_conditioning_scale: float = 1.8,
     seed: int = 42,
 ) -> Image.Image:
     edge_pixels  = int(np.sum(line_drawing_rgb[:,:,0] < 128))

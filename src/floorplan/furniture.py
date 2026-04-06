@@ -23,10 +23,10 @@ FURNITURE_RATIOS = {
     "wardrobe":        (0.18, 0.40),
     "sofa":            (0.48, 0.16),
     "table":           (0.28, 0.22),
-    "wc":              (0.18, 0.20),
-    "sink":            (0.16, 0.14),
-    "counter":         (0.55, 0.13),
-    "washing_machine": (0.18, 0.18),
+    "wc":              (0.25, 0.30),    
+    "sink":            (0.22, 0.20),    
+    "counter":         (0.60, 0.22),    
+    "washing_machine": (0.22, 0.22),
 }
 
 ROOM_FURNITURE = {

@@ -7,7 +7,7 @@ import numpy as np
 
 
 def _draw_bed(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     headboard_h = max(6, h // 4)
     cv2.rectangle(img, (x, y), (x+w, y+headboard_h), 0, -1)
     cx = x + w // 2
@@ -15,7 +15,7 @@ def _draw_bed(img, x, y, w, h):
 
 
 def _draw_sofa(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     back_h = max(6, h // 3)
     cv2.rectangle(img, (x, y), (x+w, y+back_h), 0, -1)
     arm_w = max(4, w // 7)
@@ -24,13 +24,13 @@ def _draw_sofa(img, x, y, w, h):
 
 
 def _draw_table(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     cv2.line(img, (x, y), (x+w, y+h), 0, 2)
     cv2.line(img, (x+w, y), (x, y+h), 0, 2)
 
 
 def _draw_wc(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     tank_h = max(5, h // 3)
     cv2.rectangle(img, (x, y), (x+w, y+tank_h), 0, -1)
     bowl_cx = x + w // 2
@@ -41,7 +41,7 @@ def _draw_wc(img, x, y, w, h):
 
 
 def _draw_sink(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     cx = x + w // 2
     cy = y + h // 2
     r = max(4, min(w, h) // 3)
@@ -50,7 +50,7 @@ def _draw_sink(img, x, y, w, h):
 
 
 def _draw_wardrobe(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     third = w // 3
     cv2.line(img, (x+third,   y), (x+third,   y+h), 0, 2)
     cv2.line(img, (x+2*third, y), (x+2*third, y+h), 0, 2)
@@ -60,7 +60,7 @@ def _draw_wardrobe(img, x, y, w, h):
 
 
 def _draw_counter(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     edge_h = max(4, h // 3)
     cv2.line(img, (x, y+edge_h), (x+w, y+edge_h), 0, 2)
     sink_r = max(4, min(w//5, h//3))
@@ -68,7 +68,7 @@ def _draw_counter(img, x, y, w, h):
 
 
 def _draw_washing_machine(img, x, y, w, h):
-    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 2)
+    cv2.rectangle(img, (x, y), (x+w, y+h), 0, 4)
     cx = x + w // 2
     cy = y + h // 2
     r = max(5, min(w, h) // 2 - 4)
@@ -101,10 +101,9 @@ def draw_architectural_plan(
 
     # Draw walls — thin them down so furniture is relatively bolder
     # Erode wall mask slightly so walls are 2-3px not 10px
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = np.ones((2, 2), np.uint8)
     thinned_walls = cv2.erode(wall_mask, kernel, iterations=1)
     drawing[thinned_walls == 255] = 0
-
     # Draw furniture symbols with thickness=2
     for entry in furniture_by_room:
         items = entry.get("items", {})

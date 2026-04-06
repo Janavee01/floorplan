@@ -59,9 +59,11 @@ def run(input_path, config, render):
     furniture_by_room = []
     for room in rooms:
         items = place_room_furniture(room, wall_mask, None, None)
+        print(f"\n{room['type']}:")
+        for name, rect in items.items():
+            print(f"  {name}: {rect}")
         furniture_by_room.append({"room": room, "items": items})
 
-    # Draw colored furnished plan (for display)
     furnished = furnish_all(
         rooms, wall_mask,
         door_mask=None, clearance_map=None,
@@ -89,12 +91,14 @@ def run(input_path, config, render):
         rc = config["render"]
         print("[7/7] Building architectural line drawing ...")
 
-        # Draw walls + furniture symbols as clean line art
-
-        line_rgb = plan_to_rgb_control(line_drawing)
-
+        
         print("[7/7] Loading ControlNet ...")
         pipe, device = load_pipeline()
+        
+        line_drawing = cv2.GaussianBlur(line_drawing, (5, 5), 0)
+        edges = cv2.Canny(line_drawing, 100, 200)
+        line_rgb = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
+        line_rgb = cv2.resize(line_rgb, (512, 512))
         result = render_isometric(
             pipe=pipe,
             device=device,
