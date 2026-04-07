@@ -114,7 +114,7 @@ python main.py --input floorplan.jpg --render
 pytest tests/ -v
 ```
 
-**Outputs** saved to `results/`:
+**Outputs** saved to `assets/`:
 
 | File | Description |
 |---|---|
@@ -128,7 +128,7 @@ pytest tests/ -v
 
 ## Configuration
 
-Every parameter lives in `config.yaml` — no magic numbers in code:
+Every parameter lives in `config.yaml`:
 
 ```yaml
 segmentation:
