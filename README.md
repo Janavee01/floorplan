@@ -61,6 +61,10 @@ Runs 5 preprocessing variants (original, 2× upscale binary, 2× Otsu, 3× Otsu,
 **Room Segmentation — Voronoi Flood Fill**  
 Instead of distance-transform thresholding, each free pixel is assigned to its nearest OCR seed by Euclidean distance (Voronoi partition). This correctly splits open-plan layouts (Kitchen + Living Room sharing one connected region) without needing a wall between them. Morphological closing seals door gaps before segmentation so rooms don't bleed through doorways.
 
+**Open-Plan Kitchen Handling - Voronoi Split**
+Separates kitchen from adjacent rooms even without walls or doors using OCR seed points
+Nearest-label Voronoi assignment partitions a single open region into distinct functional spaces
+
 **Furniture Placement — Sequential Mask Subtraction**  
 Furniture items are placed one at a time. After each placement, occupied pixels plus a 4px clearance pad are removed from the available room mask — making overlap geometrically impossible for the next item. Sizes are proportional to the room's bounding box so furniture scales correctly across different plan resolutions.
 
