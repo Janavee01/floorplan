@@ -9,7 +9,7 @@ An end-to-end computer vision pipeline that takes a 2D architectural floor plan 
 
 ## Demo
 
-| Input Floor Plan | Room Detection | Furnished Plan | 3D Render |
+| Input Floor Plan | Room Detection | Furniture Placing | Furnished Plan | 3D Render |
 |:-:|:-:|:-:|:-:|
 | ![input](assets/fp.jpg) | ![rooms](assets/colored_plan.png) | ![furniture placing](assets/furnished_plan.png) | ![furniture drawing](assets/line_drawing.png) | ![render](assets/isometric_render.png) |
 
