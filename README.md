@@ -181,5 +181,4 @@ Label variants handled: "BATH RM", "WIC", "LIVING ROOM", "MASTER BEDROOM", "EN S
 - [x] Architectural symbol drawing for ControlNet input
 - [x] ControlNet + Stable Diffusion 3D render pipeline
 - [ ] Streamlit web app — upload and visualise in browser
-- [ ] CLIP zero-shot fallback for unlabelled rooms
-- [ ] Scale calibration from dimension annotations
+
